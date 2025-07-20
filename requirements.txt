@@ -1,7 +1,10 @@
 python-telegram-bot==20.3
 pandas
-pandas
 openpyxl
 matplotlib
 numpy
 python-dotenv
+flask
+httpx
+requests
+
