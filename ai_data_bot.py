@@ -1,62 +1,31 @@
 import os
 import logging
-import time
-from flask import Flask, request, abort
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
+)
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters
+    ApplicationBuilder, CommandHandler, MessageHandler, filters,
+    ContextTypes, CallbackQueryHandler
 )
 import pandas as pd
 from io import BytesIO
 from dotenv import load_dotenv
 from difflib import get_close_matches
 import openai
-import sentry_sdk
+import traceback
 
-# --- LOAD ENV ---
+# === Load secrets ===
 load_dotenv()
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OPENAI_KEY = os.getenv("OPENAI_KEY")
-SENTRY_DSN = os.getenv("SENTRY_DSN")
-
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+OPENAI_KEY = os.getenv('OPENAI_API_KEY')
 openai.api_key = OPENAI_KEY
-if SENTRY_DSN:
-    sentry_sdk.init(SENTRY_DSN, traces_sample_rate=1.0)
 
-# --- LOGGING ---
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# === Logging ===
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("AI_DATA_BOT")
 
-LANGS = ['ru', 'en']
 user_files = {}
-user_dfs = {}
-
-# --- SIMPLE RATE LIMITING (per user, per minute) ---
-RATE_LIMIT = 12  # max 12 actions/minute per user
-user_last_actions = {}
-
-def rate_limited(user_id):
-    now = time.time()
-    actions = user_last_actions.get(user_id, [])
-    # Only keep actions in last 60 seconds
-    actions = [t for t in actions if now - t < 60]
-    if len(actions) >= RATE_LIMIT:
-        return True
-    actions.append(now)
-    user_last_actions[user_id] = actions
-    return False
-
-SAFE_SYSTEM_PROMPT = (
-    "You are a Python code generator for a Telegram data analytics bot. "
-    "The user gives you a DataFrame 'df' and a task. "
-    "ALWAYS output ONLY valid Python code, using only the columns provided below. "
-    "ALWAYS create a string variable named 'result' with the answer (do NOT use print()). "
-    "Handle missing columns gracefully. "
-    "Never import, open files, run shell commands, or execute dangerous code. "
-    "Never output anything but the code. "
-    "File columns: {columns}"
-)
+LANGS = ['ru', 'en']
 
 MESSAGES = {
     'start': {
@@ -95,14 +64,18 @@ MESSAGES = {
         'ru': "❗ Произошла ошибка:",
         'en': "❗ An error occurred:",
     },
-    'rate_limited': {
-        'ru': "⏳ Слишком много запросов. Попробуйте позже.",
-        'en': "⏳ Too many requests. Please try again later.",
+    'expert_processing': {
+        'ru': "Обрабатываю экспертный запрос...",
+        'en': "Processing expert request...",
     },
-    'file_invalid': {
-        'ru': "❗ Файл не поддерживается или слишком большой.",
-        'en': "❗ File not supported or too large.",
-    }
+    'columns_btn': {
+        'ru': "Показать столбцы",
+        'en': "Show columns",
+    },
+    'expert_btn': {
+        'ru': "💡 Экспертный режим",
+        'en': "💡 Expert mode",
+    },
 }
 
 def get_lang(update):
@@ -111,34 +84,12 @@ def get_lang(update):
 
 def main_menu(lang):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(MESSAGES['columns'][lang], callback_data='show_columns')],
+        [InlineKeyboardButton(MESSAGES['columns_btn'][lang], callback_data='show_columns')],
         [InlineKeyboardButton(MESSAGES['count_gender'][lang], callback_data='count_gender')],
         [InlineKeyboardButton(MESSAGES['unique_managers'][lang], callback_data='unique_managers')],
         [InlineKeyboardButton(MESSAGES['count_city'][lang], callback_data='count_city')],
-        [InlineKeyboardButton("💡 Expert / Эксперт", callback_data='expert')]
+        [InlineKeyboardButton(MESSAGES['expert_btn'][lang], callback_data='expert')]
     ])
-
-def parse_file(file_bytes, filename=None):
-    ext = os.path.splitext(filename)[-1].lower() if filename else ""
-    if len(file_bytes) > 5 * 1024 * 1024:  # 5 MB max
-        return None, "File too large."
-    try:
-        if ext in ['.xlsx', '.xls']:
-            df = pd.read_excel(BytesIO(file_bytes))
-        elif ext == '.csv':
-            df = pd.read_csv(BytesIO(file_bytes), encoding='utf-8')
-        elif ext == '.tsv':
-            df = pd.read_csv(BytesIO(file_bytes), sep='\t', encoding='utf-8')
-        else:
-            try:
-                df = pd.read_excel(BytesIO(file_bytes))
-            except Exception:
-                df = pd.read_csv(BytesIO(file_bytes), encoding='utf-8')
-        if len(df.columns) > 1000:
-            return None, "Too many columns in file."
-        return df, None
-    except Exception as e:
-        return None, str(e)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update)
@@ -146,108 +97,136 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update)
-    user_id = update.effective_user.id
-    if rate_limited(user_id):
-        await update.message.reply_text(MESSAGES['rate_limited'][lang])
-        return
     file = update.message.document
-    filename = getattr(file, "file_name", "") or ""
-    if not any(filename.lower().endswith(ext) for ext in ['.xlsx', '.xls', '.csv', '.tsv']):
-        await update.message.reply_text(MESSAGES['file_invalid'][lang])
-        return
-    new_file = await context.bot.get_file(file.file_id)
+    file_id = file.file_id
+    new_file = await context.bot.get_file(file_id)
     file_bytes = await new_file.download_as_bytearray()
-    user_files[user_id] = file_bytes
-    df, error = parse_file(file_bytes, filename)
-    if df is not None:
-        user_dfs[user_id] = (df, filename)
-        await update.message.reply_text(MESSAGES['file_received'][lang], reply_markup=main_menu(lang))
-    else:
-        await update.message.reply_text(f"{MESSAGES['error'][lang]} {error}")
+    user_files[update.effective_user.id] = file_bytes
+    await update.message.reply_text(MESSAGES['file_received'][lang], reply_markup=main_menu(lang))
 
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update)
-    user_id = update.effective_user.id
-    if rate_limited(user_id):
-        await update.callback_query.edit_message_text(MESSAGES['rate_limited'][lang])
-        return
     query = update.callback_query
-    df_info = user_dfs.get(user_id)
+    user_id = update.effective_user.id
     await query.answer()
     await context.bot.send_chat_action(chat_id=query.message.chat.id, action='typing')
-    if not df_info:
+    file_bytes = user_files.get(user_id)
+    if not file_bytes:
         await query.edit_message_text(MESSAGES['no_file'][lang])
         return
-    df, filename = df_info
-    columns = list(df.columns)
+
+    # Read file robustly
     try:
-        if query.data == 'show_columns':
-            if len(columns) > 50:
-                cols_preview = "\n".join([f"{i+1}. {c}" for i, c in enumerate(columns[:50])])
-                more_msg = f"\n...and {len(columns)-50} more columns. Reply 'all columns' to get full list."
-                await query.edit_message_text(f"{MESSAGES['columns'][lang]}\n\n{cols_preview}{more_msg}", reply_markup=main_menu(lang))
-            else:
-                cols = "\n".join([f"{i+1}. {c}" for i, c in enumerate(columns)])
-                await query.edit_message_text(f"{MESSAGES['columns'][lang]}\n\n{cols}", reply_markup=main_menu(lang))
-        elif query.data == 'count_gender':
-            gender_col = next((col for col in df.columns if any(s in col.lower() for s in ['gender','пол','sex'])), None)
-            if not gender_col:
-                await query.edit_message_text(f"{MESSAGES['error'][lang]} Не найден столбец для пола.", reply_markup=main_menu(lang))
-                return
+        df = None
+        try:
+            df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
+        except Exception:
+            try:
+                df = pd.read_csv(BytesIO(file_bytes), encoding='utf-8')
+            except Exception:
+                df = pd.read_csv(BytesIO(file_bytes), encoding='latin1')
+        if df is None or len(df.columns) == 0:
+            raise Exception("File loaded but no columns detected.")
+    except Exception as e:
+        await query.edit_message_text(f"{MESSAGES['error'][lang]} {e}")
+        logger.exception("Failed to load file")
+        return
+
+    # Handle buttons
+    if query.data == 'show_columns':
+        cols = "\n".join(str(c) for c in df.columns)
+        # Telegram edit_message_text max is 4096 chars, chunk if needed
+        for i in range(0, len(cols), 4000):
+            await query.edit_message_text(f"{MESSAGES['columns'][lang]}\n\n{cols[i:i+4000]}", reply_markup=main_menu(lang) if i == 0 else None)
+    elif query.data == 'count_gender':
+        gender_col = None
+        for col in df.columns:
+            if 'gender' in col.lower() or 'пол' in col.lower():
+                gender_col = col
+                break
+        if not gender_col:
+            await query.edit_message_text(f"{MESSAGES['error'][lang]} Не найден столбец для пола.", reply_markup=main_menu(lang))
+            return
+        try:
             counts = df[gender_col].value_counts(dropna=False)
-            result = "\n".join(f"{k}: {v}" for k, v in counts.items())
-            await query.edit_message_text(f"{MESSAGES['count_gender'][lang]}\n{result}", reply_markup=main_menu(lang))
-        elif query.data == 'unique_managers':
-            man_col = next((col for col in df.columns if any(s in col.lower() for s in ['manager','менеджер'])), None)
-            if not man_col:
-                await query.edit_message_text(f"{MESSAGES['error'][lang]} Не найден столбец для менеджера.", reply_markup=main_menu(lang))
-                return
+            result = "\n".join(f"{str(k)}: {v}" for k, v in counts.items())
+        except Exception as e:
+            result = f"{MESSAGES['error'][lang]} {e}"
+        await query.edit_message_text(f"{MESSAGES['count_gender'][lang]}\n{result}", reply_markup=main_menu(lang))
+    elif query.data == 'unique_managers':
+        man_col = None
+        for col in df.columns:
+            if 'manager' in col.lower() or 'менеджер' in col.lower():
+                man_col = col
+                break
+        if not man_col:
+            await query.edit_message_text(f"{MESSAGES['error'][lang]} Не найден столбец для менеджера.", reply_markup=main_menu(lang))
+            return
+        try:
             uniques = df[man_col].dropna().unique()
             result = "\n".join(str(m) for m in uniques)
-            await query.edit_message_text(f"{MESSAGES['unique_managers'][lang]}\n{result}", reply_markup=main_menu(lang))
-        elif query.data == 'count_city':
-            city_col = next((col for col in df.columns if any(s in col.lower() for s in ['city','город'])), None)
-            if not city_col:
-                await query.edit_message_text(f"{MESSAGES['error'][lang]} Не найден столбец для города.", reply_markup=main_menu(lang))
-                return
+        except Exception as e:
+            result = f"{MESSAGES['error'][lang]} {e}"
+        await query.edit_message_text(f"{MESSAGES['unique_managers'][lang]}\n{result}", reply_markup=main_menu(lang))
+    elif query.data == 'count_city':
+        city_col = None
+        for col in df.columns:
+            if 'city' in col.lower() or 'город' in col.lower():
+                city_col = col
+                break
+        if not city_col:
+            await query.edit_message_text(f"{MESSAGES['error'][lang]} Не найден столбец для города.", reply_markup=main_menu(lang))
+            return
+        try:
             counts = df[city_col].value_counts(dropna=False)
-            result = "\n".join(f"{k}: {v}" for k, v in counts.items())
-            await query.edit_message_text(f"{MESSAGES['count_city'][lang]}\n{result}", reply_markup=main_menu(lang))
-        elif query.data == 'expert':
-            await query.edit_message_text(MESSAGES['expert_warning'][lang], reply_markup=None)
-            context.user_data['expert'] = True
-    except Exception as e:
-        logger.error(f"Menu handler error: {e}")
-        sentry_sdk.capture_exception(e)
-        await query.edit_message_text(f"{MESSAGES['error'][lang]} {e}", reply_markup=main_menu(lang))
+            result = "\n".join(f"{str(k)}: {v}" for k, v in counts.items())
+        except Exception as e:
+            result = f"{MESSAGES['error'][lang]} {e}"
+        await query.edit_message_text(f"{MESSAGES['count_city'][lang]}\n{result}", reply_markup=main_menu(lang))
+    elif query.data == 'expert':
+        await query.edit_message_text(MESSAGES['expert_warning'][lang], reply_markup=None)
+        context.user_data['expert'] = True
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_lang(update)
     user_id = update.effective_user.id
-    if rate_limited(user_id):
-        await update.message.reply_text(MESSAGES['rate_limited'][lang])
-        return
-    text = update.message.text.lower().strip()
-    if text == 'all columns':
-        df_info = user_dfs.get(user_id)
-        if df_info:
-            columns = list(df_info[0].columns)
-            chunk_size = 50
-            for i in range(0, len(columns), chunk_size):
-                part = "\n".join([f"{i+j+1}. {c}" for j, c in enumerate(columns[i:i+chunk_size])])
-                await update.message.reply_text(part)
-        return
     if context.user_data.get('expert'):
-        df_info = user_dfs.get(user_id)
-        if not df_info:
+        await update.message.chat.send_action(action='typing')
+        file_bytes = user_files.get(user_id)
+        if not file_bytes:
             await update.message.reply_text(MESSAGES['no_file'][lang], reply_markup=main_menu(lang))
             context.user_data['expert'] = False
             return
-        df, filename = df_info
-        system_prompt = SAFE_SYSTEM_PROMPT.format(columns=', '.join(str(c) for c in df.columns))
-        user_prompt = update.message.text
         try:
-            response = openai.ChatCompletion.create(
+            df = None
+            try:
+                df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
+            except Exception:
+                try:
+                    df = pd.read_csv(BytesIO(file_bytes), encoding='utf-8')
+                except Exception:
+                    df = pd.read_csv(BytesIO(file_bytes), encoding='latin1')
+            if df is None or len(df.columns) == 0:
+                raise Exception("File loaded but no columns detected.")
+        except Exception as e:
+            await update.message.reply_text(f"{MESSAGES['error'][lang]} {e}", reply_markup=main_menu(lang))
+            context.user_data['expert'] = False
+            logger.exception("Failed to load file in expert mode")
+            return
+        # Prepare the LLM prompt
+        system_prompt = (
+            "You are a Python code generator for a Telegram data analytics bot. "
+            "The user gives you a DataFrame 'df' and a task. "
+            "ALWAYS output ONLY valid Python code, using only the columns provided below. "
+            "ALWAYS create a string variable named 'result' with the answer (do NOT use print()). "
+            "Handle missing columns gracefully. "
+            "Never import or run dangerous code. "
+            "File columns: " + ', '.join(str(c) for c in df.columns)
+        )
+        user_prompt = update.message.text
+        # Call OpenAI
+        try:
+            response = openai.chat.completions.create(
                 model="gpt-4o",
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -256,18 +235,15 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 temperature=0.0,
                 max_tokens=2048
             )
-            code = response['choices'][0]['message']['content']
+            code = response.choices[0].message.content
+            # Remove markdown if present
             if code.startswith("```"):
-                import re
-                code = re.sub(r"^```python\s*", "", code.strip())
-                code = code.replace("```", "").strip()
-            forbidden = ['import', 'open(', 'os.', 'subprocess', 'sys.', 'shutil', 'exec', 'eval', 'pickle']
-            if any(bad in code for bad in forbidden):
-                await update.message.reply_text("⚠️ Code blocked for security reasons.")
-                return
+                code = code.split('```')[1]
+                code = code.replace('python', '', 1).strip()
+            # Run code safely
             local_vars = {'df': df, 'pd': pd, 'result': None}
             try:
-                exec(code, {"__builtins__": {}}, local_vars)
+                exec(code, {}, local_vars)
                 output = local_vars.get('result', None)
                 if output is None:
                     output = "No 'result' variable was created by the code."
@@ -276,7 +252,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 matches = get_close_matches(missing, list(df.columns), n=3)
                 output = f"{MESSAGES['error'][lang]} '{missing}'. Похожие столбцы: {', '.join(matches)}"
             except Exception as e:
-                output = f"{MESSAGES['error'][lang]} {e}"
+                tb = traceback.format_exc()
+                output = f"{MESSAGES['error'][lang]} {e}\n{tb[:500]}"
+            # Show output (handle Telegram text limits)
             max_length = 3500
             if isinstance(output, str):
                 for i in range(0, len(output), max_length):
@@ -284,32 +262,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text(str(output))
         except Exception as e:
-            logger.error(f"Expert mode error: {e}")
-            sentry_sdk.capture_exception(e)
             await update.message.reply_text(f"{MESSAGES['error'][lang]} {e}", reply_markup=main_menu(lang))
+            logger.exception("Expert mode LLM error")
         context.user_data['expert'] = False
         await update.message.reply_text(MESSAGES['file_received'][lang], reply_markup=main_menu(lang))
     else:
         await update.message.reply_text(MESSAGES['file_received'][lang], reply_markup=main_menu(lang))
 
-# --- Flask for Railway Webhook ---
-flask_app = Flask(__name__)
-telegram_app = None
-
-@flask_app.route('/webhook', methods=['POST'])
-def webhook():
-    global telegram_app
-    if telegram_app is None:
-        telegram_app = Application.builder().token(TOKEN).build()
-        telegram_app.add_handler(CommandHandler("start", start))
-        telegram_app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
-        telegram_app.add_handler(CallbackQueryHandler(menu_handler))
-        telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    data = request.get_json(force=True)
-    update = Update.de_json(data, telegram_app.bot)
-    telegram_app.process_update(update)
-    return 'ok'
-
 if __name__ == '__main__':
-    flask_app.run(host='0.0.0.0', port=8080)
+    print("\n🚀 AI_DATA_BOT: RUNNING ULTRA-ROBUST VERSION\n")
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+    app.add_handler(CallbackQueryHandler(menu_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    app.run_polling()
 

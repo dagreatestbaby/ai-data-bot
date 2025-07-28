@@ -1,1 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+ENV/
+env/
+
+# MacOS
+.DS_Store
+
+# Python egg stuff
+*.egg-info/
+.eggs/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# dotenv environment files
 .env
+.env.*
+!.env.example
+
+# VSCode settings
+.vscode/
+
+# Data files (optional)
+*.xls*
+*.csv
+
+# Build artifacts
+build/
+dist/
+*.log
+
+# Docker
+*.pid
+
