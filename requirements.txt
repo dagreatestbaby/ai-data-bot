@@ -1,5 +1,5 @@
-Flask
 python-telegram-bot==20.3
+telethon
 pandas
 openpyxl
 python-dotenv

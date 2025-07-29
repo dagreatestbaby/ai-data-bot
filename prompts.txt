@@ -1,0 +1,100 @@
+What is the average client_age_parsed in the dataset?
+Сколько уникальных значений у apartment_floor?
+List all unique client_city_norm values.
+Покажи топ-10 причин отказа result_doubts_parsed.
+What is the sum of cost_target_budget_parsed for clients older than 35?
+Какая средняя сумма по cost_initial_payment для клиентов из Москвы?
+Show the top 5 cities by number of deals in client_city_norm.
+Сколько записей содержит статус сделки cost_deal_status_parsed "Закрыта"?
+How many clients have meeting_manager_highlights_parsed mentioning "location"?
+Перечисли все уникальные типы apartment_layout.
+What percentage of clients sold their own property before buying? (cost_own_property_sale_parsed)
+Сколько менеджеров встречались с более чем 10 конкурентными проектами?
+What is the most common meeting_objections_parsed?
+Какие значения channel_communication_method встречаются чаще всего?
+Give me the mean cost_target_budget_parsed by apartment_view_category.
+Какое минимальное значение client_age_parsed?
+List all competitive projects that were viewed by more than 5 clients.
+Покажи статистику по project_brand_knowledge_parsed.
+How many unique apartment_view_final values are there?
+Сколько клиентов проживают на этаже выше 10? (apartment_floor)
+What is the distribution of cost_initial_payment by apartment_layout?
+Сколько клиентов было с сомнениями в результате (result_doubts_parsed)?
+What is the maximum value of cost_target_budget_parsed?
+Перечисли менеджеров с наибольшим количеством встреч (meeting_manager_highlights_parsed).
+Show top-3 cities by sum of cost_initial_payment.
+Сколько проектов с положительным впечатлением (project_impression_parsed)?
+What is the median age of clients from Санкт-Петербург?
+Покажи количество сделок в разрезе apartment_view_category.
+How many clients have "Покупка квартиры для инвестиций" as client_purchase_purpose?
+Какая средняя стоимость ипотеки (cost_mortgage_conditions) по каждому городу?
+Which manager handled the most deals where result_booked_parsed is True?
+Сколько клиентов имели негативное впечатление от проекта?
+List all values of channel_communication_method used in the last month.
+Сколько разных планировок квартир есть? (apartment_layout)
+What is the most frequent competitive_pros_parsed mentioned?
+Покажи клиентов, которые просматривали более 3-х конкурентных проектов.
+Show the breakdown of deals by cost_deal_status_parsed.
+Какая средняя сумма первого взноса по каждой категории просмотра квартиры?
+How many times does each apartment_view_final value appear?
+Сколько менеджеров участвовали в более чем 5 сделках?
+List all unique apartment_view_category values.
+Покажи топ-5 причин, по которым клиенты не забронировали квартиру.
+Which city has the highest number of deals?
+Сколько клиентов были из категории apartment_view_category "Премиум"?
+What is the distribution of client_age_parsed for deals that were booked?
+Сколько уникальных вариантов в competitive_cons_parsed?
+What is the mean cost_initial_payment for each manager?
+Какие проекты были просмотрены конкурентами чаще всего?
+Show all deals with cost_own_property_sale_parsed = True.
+Сколько записей с типом общения channel_communication_method "Телефон"?
+What is the count of apartment_view_final = "Успешно"?
+Какая средняя стоимость сделки по менеджерам?
+List the 10 most frequent objections from meeting_objections_parsed.
+Сколько клиентов старше 50 лет и проживают в Москве?
+Show a breakdown of cost_target_budget_parsed for each client_city_norm.
+Какое среднее значение cost_initial_payment для каждой категории пола клиента?
+What is the maximum apartment_floor among all records?
+Сколько клиентов не указали цель покупки (client_purchase_purpose)?
+Which city had the most booked deals?
+Сколько клиентов с сомнениями в результате и положительным впечатлением?
+List all values of project_brand_knowledge_parsed mentioned by more than 2 clients.
+Какое минимальное значение cost_mortgage_conditions среди всех записей?
+What is the sum of cost_target_budget_parsed for deals closed in 2023?
+Сколько уникальных менеджеров в данных?
+Show the percentage of clients who viewed competitive projects.
+Сколько клиентов из Санкт-Петербурга и с положительным впечатлением?
+How many deals had apartment_layout as "Евро-двушка"?
+Покажи список менеджеров с наибольшим количеством положительных отзывов.
+What is the average number of competitive projects viewed per client?
+Сколько клиентов купили квартиру для детей?
+List all deal statuses and how often each occurs.
+Какой средний возраст клиентов в категории apartment_view_final "Неуспешно"?
+What is the most common reason for doubts in result_doubts_parsed?
+Сколько клиентов одновременно продавали свою недвижимость и бронировали новую?
+Show all unique values of meeting_next_steps_parsed.
+Какая сумма первого взноса по каждой категории клиентов?
+Which manager had the most successful bookings?
+Сколько уникальных категорий просмотра квартиры (apartment_view_category)?
+What is the distribution of cost_own_property_sale_parsed values?
+Сколько клиентов в каждой категории возраста?
+Show top 5 cities by average cost_initial_payment.
+Какая средняя сумма сделки по каждому проекту?
+List all unique result_booked_parsed values.
+Сколько сделок было успешно завершено в Москве?
+What is the average client_age_parsed for premium apartment_view_category?
+Сколько клиентов из Москвы и Санкт-Петербурга вместе?
+Show all deals where competitive_cons_parsed mentions "дорого".
+Сколько клиентов указали канал коммуникации как "Видеозвонок"?
+What is the maximum cost_target_budget_parsed for each city?
+Сколько сделок не были забронированы (result_booked_parsed = False)?
+Which manager has the highest sum of deals?
+Сколько уникальных конкурентных плюсов (competitive_pros_parsed)?
+What is the average number of meeting_manager_highlights_parsed per client?
+Сколько клиентов имели сомнения и отрицательное впечатление?
+Which apartment_layout is most popular among clients over 30?
+Покажи топ-3 категории просмотра квартиры по объему сделок.
+How many clients have positive project_impression_parsed and booked deals?
+Сколько клиентов в Москве с типом просмотра "Премиум"?
+List all unique client_purchase_purpose values.
+

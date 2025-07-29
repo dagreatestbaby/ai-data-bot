@@ -1,20 +1,24 @@
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-)
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from app.handlers import (
-    start_command, file_upload_handler, menu_callback_handler, text_handler
+    handle_start, handle_file, handle_columns, handle_stat, handle_expert
 )
 from app.config import TELEGRAM_BOT_TOKEN
 
-application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-application.add_handler(CommandHandler("start", start_command))
-application.add_handler(MessageHandler(filters.Document.ALL, file_upload_handler))
-application.add_handler(CallbackQueryHandler(menu_callback_handler))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+def main():
+    updater = Updater(token=TELEGRAM_BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-def process_telegram_update(update_data):
-    from telegram import Update, Bot
-    bot = application.bot
-    update = Update.de_json(update_data, bot)
-    application.process_update(update)
+    dp.add_handler(CommandHandler("start", handle_start))
+    dp.add_handler(CommandHandler("columns", handle_columns))
+    dp.add_handler(CommandHandler("stat", handle_stat))
+    dp.add_handler(CommandHandler("expert", handle_expert))
+    dp.add_handler(MessageHandler(Filters.document, handle_file))
+    # Anything else as expert mode (fallback)
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_expert))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == "__main__":
+    main()
 
