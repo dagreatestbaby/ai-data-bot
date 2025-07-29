@@ -1,71 +1,101 @@
-from app.utils import load_dataframe, get_columns, aggregate_column, safe_send_message
-from app.i18n import get_message
-from app.config import OPENAI_API_KEY
-import openai
+import pandas as pd
+import traceback
+import os
 
-user_files = {}
+TELEGRAM_LIMIT = 4096
 
-def handle_start(update, context):
-    lang = "ru" if update.effective_user.language_code == "ru" else "en"
-    safe_send_message(context.bot, update.effective_chat.id, get_message('start', lang))
+def split_message(text, limit=TELEGRAM_LIMIT):
+    lines = text.splitlines(keepends=True)
+    result = []
+    current = ""
+    for line in lines:
+        if len(current) + len(line) > limit:
+            result.append(current)
+            current = line
+        else:
+            current += line
+    if current:
+        result.append(current)
+    return result
 
-def handle_file(update, context):
-    lang = "ru" if update.effective_user.language_code == "ru" else "en"
-    file = update.message.document.get_file()
-    file_bytes = file.download_as_bytearray()
+def send_long_message(bot, chat_id, text):
+    for chunk in split_message(str(text)):
+        bot.send_message(chat_id, chunk)
+
+def handle_expert_mode(bot, chat_id, df, question, openai_client):
+    # Step 1: Build prompt for LLM (schema only, never user data)
+    prompt = (
+        f"Columns: {list(df.columns)}\n"
+        f"User question: '{question}'\n"
+        "Generate safe Python code to answer using the Pandas DataFrame 'df'. "
+        "Put the final answer in a variable called 'result'."
+    )
+
+    # Step 2: Get code from LLM (not data)
+    code = None
     try:
-        df = load_dataframe(file_bytes)
-        user_files[update.effective_user.id] = df
-        safe_send_message(context.bot, update.effective_chat.id, get_message('file_received', lang))
-    except Exception as e:
-        safe_send_message(context.bot, update.effective_chat.id, f"{get_message('error', lang)} {e}")
-
-def handle_columns(update, context):
-    lang = "ru" if update.effective_user.language_code == "ru" else "en"
-    df = user_files.get(update.effective_user.id)
-    if df is None:
-        safe_send_message(context.bot, update.effective_chat.id, get_message('no_file', lang))
-    else:
-        cols = get_columns(df)
-        safe_send_message(context.bot, update.effective_chat.id, f"{get_message('columns', lang)}\n{cols}")
-
-def handle_stat(update, context):
-    lang = "ru" if update.effective_user.language_code == "ru" else "en"
-    df = user_files.get(update.effective_user.id)
-    if df is None:
-        safe_send_message(context.bot, update.effective_chat.id, get_message('no_file', lang))
-        return
-    try:
-        args = context.args
-        if len(args) < 2:
-            safe_send_message(context.bot, update.effective_chat.id, get_message('unsupported', lang))
-            return
-        column, op = args[0], args[1]
-        result = aggregate_column(df, column, op)
-        safe_send_message(context.bot, update.effective_chat.id, result)
-    except Exception as e:
-        safe_send_message(context.bot, update.effective_chat.id, f"{get_message('error', lang)} {e}")
-
-def handle_expert(update, context):
-    lang = "ru" if update.effective_user.language_code == "ru" else "en"
-    df = user_files.get(update.effective_user.id)
-    if df is None:
-        safe_send_message(context.bot, update.effective_chat.id, get_message('no_file', lang))
-        return
-    prompt = update.message.text
-    context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
-    try:
-        completion = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant who answers data questions. The DataFrame columns are: " + ", ".join([str(c) for c in df.columns])},
-                {"role": "user", "content": f"Columns: {', '.join([str(c) for c in df.columns])}\nPrompt: {prompt}"}
-            ],
-            api_key=OPENAI_API_KEY,
-            temperature=0
+        response = openai_client.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
         )
-        reply = completion.choices[0].message['content']
-        safe_send_message(context.bot, update.effective_chat.id, reply)
+        # You must define extract_code_from_response to get the code block as a string
+        code = extract_code_from_response(response)
     except Exception as e:
-        safe_send_message(context.bot, update.effective_chat.id, f"{get_message('error', lang)} {e}")
+        send_long_message(bot, chat_id, f"Sorry, there was a problem reaching the AI: {e}")
+        return
+
+    # Step 3: Check for columns not in DataFrame
+    missing_cols = []
+    for col in extract_column_names_from_code(code):
+        if col not in df.columns:
+            missing_cols.append(col)
+    if missing_cols:
+        send_long_message(bot, chat_id, f"Sorry, the following columns do not exist: {missing_cols}\nAvailable: {list(df.columns)}")
+        return
+
+    # Step 4: Run code, handle all errors and long results
+    try:
+        local_vars = {"df": df}
+        exec(code, {}, local_vars)
+        result = local_vars.get("result")
+        if result is None:
+            send_long_message(bot, chat_id, "Sorry, the code did not produce any result.")
+            return
+        # Handle DataFrame results
+        if isinstance(result, pd.DataFrame):
+            if len(result) > 20:
+                short = result.head(10).to_string()
+                send_long_message(bot, chat_id, f"First 10 rows (of {len(result)}):\n{short}\n(Full result attached as CSV)")
+                result.to_csv("expert_result.csv", index=False)
+                with open("expert_result.csv", "rb") as f:
+                    bot.send_document(chat_id, f)
+                os.remove("expert_result.csv")
+            else:
+                send_long_message(bot, chat_id, result.to_string())
+        # Handle long text/string results
+        elif isinstance(result, str) and len(result) > TELEGRAM_LIMIT:
+            send_long_message(bot, chat_id, result)
+        else:
+            send_long_message(bot, chat_id, str(result))
+    except Exception as e:
+        # Friendly error, not traceback
+        send_long_message(bot, chat_id, f"Sorry, there was an error: {type(e).__name__}: {e}")
+
+# --- You must implement these two helpers based on your LLM response format ---
+
+def extract_code_from_response(response):
+    # Your code here: parse out the code block from OpenAI's response
+    # For example, if response["choices"][0]["message"]["content"] contains "```python\n ... \n```"
+    import re
+    content = response["choices"][0]["message"]["content"]
+    code_blocks = re.findall(r"```python(.*?)```", content, re.DOTALL)
+    if code_blocks:
+        return code_blocks[0].strip()
+    # fallback: return all if no code block
+    return content.strip()
+
+def extract_column_names_from_code(code):
+    # Very basic: try to find all words after df[" or df['
+    import re
+    return re.findall(r'df\[\s*[\'"]([^\'"]+)[\'"]\s*\]', code)
 

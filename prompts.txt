@@ -1,3 +1,100 @@
+Show all columns.
+What are the unique values of region?
+Сколько строк в файле?
+Calculate mean of income_parsed.
+Покажи сумму по столбцу cost_target_budget_parsed.
+What is the max client_age_parsed?
+List top 5 frequent client_city_norm.
+Сколько клиентов младше 30 лет?
+What is the median of apartment_floor?
+Покажи уникальные значения apartment_type.
+How many nulls in result_doubts_parsed?
+List all unique values of realty_status.
+Какая средняя стоимость cost_target_budget_parsed у мужчин?
+What is the sum of cost_target_budget_parsed for clients in Moscow?
+What percent of clients are married?
+Покажи минимальное значение client_age_parsed.
+Сколько уникальных region?
+List 10 most frequent client_city_norm values.
+How many clients are older than 50?
+Какая сумма по cost_target_budget_parsed у клиентов старше 40?
+Show mean of result_doubts_parsed for rejected clients.
+List all possible values in client_city_norm.
+How many clients have cost_target_budget_parsed > 1_000_000?
+Покажи количество клиентов с ипотекой.
+What is the average result_doubts_parsed for apartment_type == 'studio'?
+Count number of female clients.
+What is the most frequent realty_status?
+How many rows are in the file?
+Покажи средний возраст клиентов.
+Show all unique values of apartment_type.
+Сколько клиентов из Санкт-Петербурга?
+What is the standard deviation of income_parsed?
+How many unique values in result_doubts_parsed?
+Какая сумма по cost_target_budget_parsed у женатых клиентов?
+Which column has the most nulls?
+List 5 most expensive cost_target_budget_parsed.
+What is the range of client_age_parsed?
+Show max and min for income_parsed.
+Покажи все уникальные значения поля client_city_norm.
+Count of rows where result_doubts_parsed is not null.
+Сколько клиентов из Москвы младше 30 лет?
+How many clients have income_parsed < 50000?
+Which apartment_type is most common?
+List all columns.
+What is the mode of result_doubts_parsed?
+Сколько уникальных значений в каждом столбце?
+Show total clients by region.
+Какая минимальная стоимость в столбце cost_target_budget_parsed?
+Show the first 10 rows.
+How many columns are in the file?
+What is the sum of cost_target_budget_parsed for clients younger than 30?
+Какая доля клиентов с пустым полем income_parsed?
+What is the average for every numeric column?
+Покажи количество строк, где apartment_floor == 3.
+Which city has the most clients?
+How many clients have result_doubts_parsed == 'unknown'?
+List all distinct values of region.
+Какая самая частая причина отказа?
+What percent of rows have missing data?
+What is the count of clients by realty_status?
+Покажи сумму по столбцу income_parsed для клиентов из region == 'Central'.
+Which client_age_parsed values are outliers?
+List the top 3 result_doubts_parsed values by frequency.
+Show the average apartment_floor for each region.
+Какая медиана по cost_target_budget_parsed?
+Which columns have only one unique value?
+How many different cities are there?
+List all numeric columns.
+What is the min, max, mean for income_parsed?
+Show all rows where client_age_parsed is null.
+Какая доля клиентов с типом квартиры 'однушка'?
+How many clients are from Moscow or Saint Petersburg?
+Show the mean, median, mode for client_age_parsed.
+What is the average income_parsed for clients over 45?
+List unique values in result_doubts_parsed for rejected clients.
+Какая сумма по cost_target_budget_parsed для клиентов с ипотекой?
+Which realty_status is least common?
+How many rows have all values filled in?
+Show the distribution of client_age_parsed.
+List all regions in dataset.
+Покажи количество клиентов по apartment_type.
+What is the variance of income_parsed?
+Show 3 most expensive apartments.
+How many apartments have floor > 10?
+List unique apartment_type values.
+What is the mean client_age_parsed for each region?
+Сколько клиентов имеют apartment_floor == 1?
+Which city has the youngest clients on average?
+List all possible values for realty_status.
+Какая медиана по client_age_parsed?
+Show how many clients are in each city.
+Which income_parsed values are most common?
+Show all rows where region is missing.
+What is the mean, median, min, max of cost_target_budget_parsed?
+List unique values of all columns.
+Какая минимальная, максимальная и средняя этажность у квартир?
+Show all columns and their data types.
 What is the average client_age_parsed in the dataset?
 Сколько уникальных значений у apartment_floor?
 List all unique client_city_norm values.
