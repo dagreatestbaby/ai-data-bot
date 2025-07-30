@@ -31,11 +31,15 @@ MESSAGES = {
         'en': "No such column or value",
         'ru': "Нет такой колонки или значения",
     },
+    'pdf_too_large': {
+        'en': "PDF output too large to send. Please narrow your query.",
+        'ru': "PDF-файл слишком большой для отправки. Пожалуйста, сузьте запрос.",
+    },
 }
 
 def get_message(key: str, lang: str = "en") -> str:
     """
-    Get a localized message for a given key and language, fallback to English.
+    Returns a localized message for the given key and language, fallback to English.
     """
     return MESSAGES.get(key, {}).get(lang, MESSAGES[key]['en'])
 
