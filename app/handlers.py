@@ -1,11 +1,23 @@
 import pandas as pd
-import traceback
 import os
+import traceback
+import logging
+from app.i18n import get_message
+from app.utils import safe_numeric, make_pdf, send_output
+
+# Configure logger (rotating file for support)
+logging.basicConfig(
+    filename="app/logs/bot_handler.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
 
 TELEGRAM_LIMIT = 4096
+PDF_OUTPUT_LIMIT = 1000  # Characters
 
 def split_message(text, limit=TELEGRAM_LIMIT):
-    lines = text.splitlines(keepends=True)
+    """Split long messages for Telegram."""
+    lines = str(text).splitlines(keepends=True)
     result = []
     current = ""
     for line in lines:
@@ -18,84 +30,97 @@ def split_message(text, limit=TELEGRAM_LIMIT):
         result.append(current)
     return result
 
-def send_long_message(bot, chat_id, text):
-    for chunk in split_message(str(text)):
-        bot.send_message(chat_id, chunk)
+def sanitize_and_send(bot, chat_id, result, lang='en'):
+    """
+    Send result (DataFrame, str, or other) to user as PDF if too long, else as text.
+    Handles empty, error, and non-string cases. Always Unicode.
+    """
+    if result is None or (isinstance(result, pd.DataFrame) and result.empty):
+        msg = get_message('no_such_column_or_value', lang)
+        send_output(bot, chat_id, msg, lang)
+        return
 
-def handle_expert_mode(bot, chat_id, df, question, openai_client):
-    # Step 1: Build prompt for LLM (schema only, never user data)
+    if isinstance(result, pd.DataFrame):
+        out_str = result.to_string()
+    elif isinstance(result, str):
+        out_str = result.strip()
+        if not out_str:
+            msg = get_message('no_such_column_or_value', lang)
+            send_output(bot, chat_id, msg, lang)
+            return
+    else:
+        out_str = str(result)
+
+    # Avoid PDF output for tiny results, and always send Unicode-safe PDF
+    send_output(bot, chat_id, out_str, lang)
+
+def handle_expert_mode(bot, chat_id, df, question, openai_client, lang='en'):
+    """
+    Main expert mode: ask LLM for code, run it, and return answer.
+    Provides maximal safety, i18n, logging, and bulletproof output.
+    """
+    # Build prompt for LLM, only send schema
     prompt = (
         f"Columns: {list(df.columns)}\n"
         f"User question: '{question}'\n"
-        "Generate safe Python code to answer using the Pandas DataFrame 'df'. "
+        "Generate safe, robust Python code to answer the question using only the Pandas DataFrame 'df'. "
+        "Code MUST handle missing values and non-numeric data robustly. "
         "Put the final answer in a variable called 'result'."
     )
 
-    # Step 2: Get code from LLM (not data)
-    code = None
     try:
         response = openai_client.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4",   
             messages=[{"role": "user", "content": prompt}]
         )
-        # You must define extract_code_from_response to get the code block as a string
         code = extract_code_from_response(response)
     except Exception as e:
-        send_long_message(bot, chat_id, f"Sorry, there was a problem reaching the AI: {e}")
+        logging.exception("OpenAI error")
+        send_output(bot, chat_id, get_message('error', lang) + f" Sorry, could not reach the AI: {e}", lang)
         return
 
-    # Step 3: Check for columns not in DataFrame
+    # Extract columns referenced in LLM code, check if all present
     missing_cols = []
     for col in extract_column_names_from_code(code):
         if col not in df.columns:
             missing_cols.append(col)
     if missing_cols:
-        send_long_message(bot, chat_id, f"Sorry, the following columns do not exist: {missing_cols}\nAvailable: {list(df.columns)}")
+        msg = get_message('no_such_column_or_value', lang) + f": {', '.join(missing_cols)}"
+        send_output(bot, chat_id, msg, lang)
         return
 
-    # Step 4: Run code, handle all errors and long results
+    # Safe numeric conversion for all relevant columns
+    for col in df.columns:
+        try:
+            if df[col].dtype == object or df[col].apply(lambda x: isinstance(x, str)).any():
+                df[col] = safe_numeric(df[col])
+        except Exception:
+            logging.warning(f"Numeric conversion failed for column {col}", exc_info=True)
+
+    # Run LLM code in maximum isolation (disable builtins)
     try:
         local_vars = {"df": df}
-        exec(code, {}, local_vars)
-        result = local_vars.get("result")
-        if result is None:
-            send_long_message(bot, chat_id, "Sorry, the code did not produce any result.")
-            return
-        # Handle DataFrame results
-        if isinstance(result, pd.DataFrame):
-            if len(result) > 20:
-                short = result.head(10).to_string()
-                send_long_message(bot, chat_id, f"First 10 rows (of {len(result)}):\n{short}\n(Full result attached as CSV)")
-                result.to_csv("expert_result.csv", index=False)
-                with open("expert_result.csv", "rb") as f:
-                    bot.send_document(chat_id, f)
-                os.remove("expert_result.csv")
-            else:
-                send_long_message(bot, chat_id, result.to_string())
-        # Handle long text/string results
-        elif isinstance(result, str) and len(result) > TELEGRAM_LIMIT:
-            send_long_message(bot, chat_id, result)
-        else:
-            send_long_message(bot, chat_id, str(result))
+        safe_globals = {"__builtins__": {}}  # No builtins for LLM code
+        exec(code, safe_globals, local_vars)
+        result = local_vars.get("result", None)
+        sanitize_and_send(bot, chat_id, result, lang)
     except Exception as e:
-        # Friendly error, not traceback
-        send_long_message(bot, chat_id, f"Sorry, there was an error: {type(e).__name__}: {e}")
-
-# --- You must implement these two helpers based on your LLM response format ---
+        tb = traceback.format_exc()
+        msg = get_message('error', lang) + f" {type(e).__name__}: {e}"
+        logging.error(f"LLM code exec error: {msg}\n{tb}")
+        send_output(bot, chat_id, msg, lang)
 
 def extract_code_from_response(response):
-    # Your code here: parse out the code block from OpenAI's response
-    # For example, if response["choices"][0]["message"]["content"] contains "```python\n ... \n```"
+    """Extracts python code from LLM response."""
     import re
     content = response["choices"][0]["message"]["content"]
     code_blocks = re.findall(r"```python(.*?)```", content, re.DOTALL)
     if code_blocks:
         return code_blocks[0].strip()
-    # fallback: return all if no code block
     return content.strip()
-
+    
 def extract_column_names_from_code(code):
-    # Very basic: try to find all words after df[" or df['
+    """Detect all DataFrame column references in LLM code."""
     import re
     return re.findall(r'df\[\s*[\'"]([^\'"]+)[\'"]\s*\]', code)
 

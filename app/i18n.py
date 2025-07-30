@@ -27,8 +27,15 @@ MESSAGES = {
         'en': "Sorry, I can't do that yet.",
         'ru': "Извините, я не могу выполнить этот запрос.",
     },
+    'no_such_column_or_value': {
+        'en': "No such column or value",
+        'ru': "Нет такой колонки или значения",
+    },
 }
 
 def get_message(key: str, lang: str = "en") -> str:
+    """
+    Get a localized message for a given key and language, fallback to English.
+    """
     return MESSAGES.get(key, {}).get(lang, MESSAGES[key]['en'])
 

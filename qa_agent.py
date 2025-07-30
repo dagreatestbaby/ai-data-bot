@@ -1,6 +1,9 @@
 from telethon import TelegramClient, Button
-import asyncio, csv, time
+import asyncio
+import csv
+import time
 import os
+import pdfplumber
 
 API_ID = 24580235
 API_HASH = "7644a557e5c5149a4dc6bae8b4ff04f"
@@ -9,33 +12,51 @@ SESSION = "testsession"
 TEST_FILE = "Kopio_ Kopio_ BA Аналитика по всем записям.xlsx"
 PROMPT_FILE = "prompts.txt"
 OUTFILE = "qa_results.csv"
-LOGFILE = "qa_log_all_messages.csv"  # Log every bot message
+LOGFILE = "qa_log_all_messages.csv"
 
-# Set up the log file header if it doesn't exist
 if not os.path.exists(LOGFILE):
     with open(LOGFILE, "w", newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(["timestamp", "from_bot", "message_text"])
 
-async def log_all_bot_messages(client):
-    async for msg in client.iter_messages(BOT_USERNAME, limit=100):
-        with open(LOGFILE, "a", newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), True, msg.text or ""])
-
-# Helper: Wait for a message containing a substring, from the bot, within a limit
 async def wait_for_message(client, substr, limit=12, timeout=30):
+    import telethon
     deadline = time.time() + timeout
     while time.time() < deadline:
-        async for msg in client.iter_messages(BOT_USERNAME, limit=limit):
-            if msg.text and substr in msg.text:
-                # Log this message as well
-                with open(LOGFILE, "a", newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), True, msg.text])
-                return msg
+        try:
+            async for msg in client.iter_messages(BOT_USERNAME, limit=limit):
+                try:
+                    if getattr(msg, "text", None) and substr in msg.text:
+                        with open(LOGFILE, "a", newline='', encoding='utf-8') as f:
+                            writer = csv.writer(f)
+                            writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), True, msg.text])
+                        return msg
+                except Exception as inner_e:
+                    print(f"[warn] Skipping message: {inner_e}")
+                    continue
+        except telethon.errors.common.TypeNotFoundError as e:
+            print(f"[warn] TypeNotFoundError, skipping chunk: {e}")
+            continue
+        except Exception as e:
+            print(f"[warn] General error: {e}")
+            continue
         await asyncio.sleep(1)
     return None
+
+async def extract_pdf_text_from_msg(client, msg):
+    # Download file to temp location
+    if not msg.document or not msg.file:
+        return None
+    filename = "temp_answer.pdf"
+    await msg.download_media(file=filename)
+    text = ""
+    with pdfplumber.open(filename) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+    os.remove(filename)
+    return text.strip()
 
 async def main():
     client = TelegramClient(SESSION, API_ID, API_HASH)
@@ -45,7 +66,7 @@ async def main():
     await asyncio.sleep(2)
     await client.send_file(BOT_USERNAME, TEST_FILE)
     print("Uploaded file, waiting for bot to respond with buttons...")
-    await asyncio.sleep(10)  # Give time for upload and processing
+    await asyncio.sleep(10)
 
     prompts = [l.strip() for l in open(PROMPT_FILE, encoding='utf-8') if l.strip()]
 
@@ -54,11 +75,10 @@ async def main():
         writer.writerow(["prompt", "response"])
 
         for idx, prompt in enumerate(prompts):
-            # --- Always find the most recent message with a working "Expert mode" button ---
             found_expert = False
             for _ in range(10):
                 messages = [msg async for msg in client.iter_messages(BOT_USERNAME, limit=8)]
-                messages.sort(key=lambda m: m.id, reverse=True)  # Newest first
+                messages.sort(key=lambda m: m.id, reverse=True)
                 for msg in messages:
                     if msg.buttons:
                         for row in msg.buttons:
@@ -68,7 +88,6 @@ async def main():
                                         await msg.click(text=button.text)
                                         found_expert = True
                                         print(f"[{idx+1}/{len(prompts)}] Pressed Expert mode.")
-                                        # Log this action
                                         with open(LOGFILE, "a", newline='', encoding='utf-8') as logf:
                                             log_writer = csv.writer(logf)
                                             log_writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), True, f"Clicked button: {button.text}"])
@@ -87,10 +106,9 @@ async def main():
                 writer.writerow([prompt, "NO EXPERT MODE BUTTON"])
                 continue
 
-            # Wait for prompt to type request
             ok = False
             for _ in range(15):
-                msg = await wait_for_message(client, "Expert mode:")  # Can adjust substr if bot sends something different
+                msg = await wait_for_message(client, "Expert mode:")
                 if msg:
                     ok = True
                     break
@@ -100,21 +118,25 @@ async def main():
                 writer.writerow([prompt, "NO PROMPT FROM BOT"])
                 continue
 
-            # Send the prompt
             await client.send_message(BOT_USERNAME, prompt)
             print(f"[{idx+1}/{len(prompts)}] Sent prompt: {prompt}")
-            # Log sent prompt
             with open(LOGFILE, "a", newline='', encoding='utf-8') as logf:
                 log_writer = csv.writer(logf)
                 log_writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), False, prompt])
 
             await asyncio.sleep(7)
 
-            # Get bot response (skip echo/menus)
             response = None
             for _ in range(12):
                 async for msg in client.iter_messages(BOT_USERNAME, limit=6):
-                    if (
+                    # Handle PDF answer
+                    if msg.document and getattr(msg.document, 'mime_type', None) == 'application/pdf':
+                        pdf_text = await extract_pdf_text_from_msg(client, msg)
+                        if pdf_text:
+                            response = pdf_text
+                            break
+                    # Handle plain text answer
+                    elif (
                         msg.text
                         and prompt not in msg.text
                         and "File received" not in msg.text
@@ -123,19 +145,12 @@ async def main():
                         and "describe your request" not in msg.text
                     ):
                         response = msg.text
-                        # Log bot response
-                        with open(LOGFILE, "a", newline='', encoding='utf-8') as logf:
-                            log_writer = csv.writer(logf)
-                            log_writer.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), True, response])
                         break
                 if response:
                     break
                 await asyncio.sleep(2)
             writer.writerow([prompt, response or "NO RESPONSE"])
             print(f"[{idx+1}/{len(prompts)}] Got response.")
-
-    # Optionally, at end log all last 100 bot messages
-    await log_all_bot_messages(client)
 
 if __name__ == "__main__":
     asyncio.run(main())
